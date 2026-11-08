@@ -24,7 +24,7 @@ case "$ARCH" in
         echo "Error: Unsupported architecture ($ARCH)"
         exit 1
         ;;
-done
+esac
 
 # 2. Create Application Directory
 echo "Creating installation directory at $INSTALL_DIR..."
