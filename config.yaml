@@ -1,0 +1,10 @@
+endpoints:
+  - url: "https://navidrome.universalserv.xyz"
+    alias: "Navidrome"
+    healthcheck callback url: "https://healthchecks.universalserv.xyz/ping/48cbbcf7-ddc1-4727-866e-20ffc2f23d66"
+    refresh rate: "1m"
+
+  - url: "https://jellyfin.universalserv.xyz"
+    alias: "Jellyfin"
+    healthcheck callback url: "https://healthchecks.universalserv.xyz/ping/af7fea3c-d72f-4c95-bcd6-2d0151b85db4"
+    refresh rate: "1m"
