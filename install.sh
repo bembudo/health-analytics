@@ -76,11 +76,15 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 
-# 6. Enable and Start Service
-echo "Enabling and starting systemd service..."
-$SUDO systemctl daemon-reload
-$SUDO systemctl enable "$SERVICE_NAME"
-$SUDO systemctl restart "$SERVICE_NAME"
-
-echo "=== Installation Complete! ==="
-echo "Check service status with: sudo systemctl status $SERVICE_NAME"
+# 6. Enable and Start Service (if systemd is available)
+if command -v systemctl >/dev/null 2>&1 && systemctl list-units --type=target --all | grep -q basic.target; then
+    echo "Enabling and starting systemd service..."
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable "$SERVICE_NAME"
+    $SUDO systemctl restart "$SERVICE_NAME"
+    echo "=== Installation Complete! ==="
+    echo "Check service status with: sudo systemctl status $SERVICE_NAME"
+else
+    echo "=== Installation Complete (Files & Config Installed)! ==="
+    echo "Note: systemd is not active in this environment (e.g., Docker container), so the service was not started automatically."
+fi
