@@ -31,10 +31,12 @@ echo "Creating installation directory at $INSTALL_DIR..."
 sudo mkdir -p "$INSTALL_DIR"
 
 # 3. Download Latest Binary from GitHub Releases
-DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY_NAME}"
-echo "Downloading binary for $ARCH..."
+# 3. Download Binary from Repository Releases Folder
+DOWNLOAD_URL="https://raw.githubusercontent.com/${REPO}/main/releases/${BINARY_NAME}"
+echo "Downloading $BINARY_NAME from repository..."
 sudo curl -L -o "${INSTALL_DIR}/health-analytics-daemon" "$DOWNLOAD_URL"
 sudo chmod +x "${INSTALL_DIR}/health-analytics-daemon"
+
 
 # 4. Install Default Config if it doesn't exist
 if [ ! -f "${INSTALL_DIR}/config.yaml" ]; then
