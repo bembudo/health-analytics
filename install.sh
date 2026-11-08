@@ -48,7 +48,7 @@ fi
 # 5. Create Systemd Service File
 echo "Configuring systemd service..."
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-sudo bash -c "cat > $SERVICE_FILE" <<EOF
+sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=Lightweight HTTP Heartbeat Healthchecks Daemon
 After=network.target
