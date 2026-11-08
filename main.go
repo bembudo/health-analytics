@@ -242,7 +242,11 @@ func performCheck(ep EndpointConfig) {
 
 func checkHTTP(client *http.Client, ep EndpointConfig, timestamp string) bool {
 	// 1. Ping the primary URL
-	resp, err := client.Get(ep.URL)
+	resp, err := client.Head(ep.URL)
+	if err == nil && resp.StatusCode == http.StatusMethodNotAllowed {
+		resp.Body.Close()
+		resp, err = client.Get(ep.URL)
+	}
 	if err != nil {
 		fmt.Printf("[%s] ERROR: Failed to reach %s: %v\n", timestamp, ep.label(), err)
 		return false
