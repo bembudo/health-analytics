@@ -2,7 +2,7 @@
 set -e
 
 # Configuration variables
-REPO="https://github.com/bembudo/health-analytics.git"  # Change to your GitHub repo
+REPO="bembudo/health-analytics"  # Change to your GitHub repo
 INSTALL_DIR="/home/orangepi/apps/health-analytics"
 SERVICE_NAME="health-analytics"
 
