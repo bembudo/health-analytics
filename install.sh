@@ -14,7 +14,7 @@ fi
 
 # Configuration variables
 REPO="bembudo/health-analytics"  # Change to your GitHub repo
-INSTALL_DIR="/home/orangepi/apps/health-analytics"
+INSTALL_DIR="${INSTALL_DIR:-/opt/health-analytics}"
 SERVICE_NAME="health-analytics"
 
 echo "=== Installing Health Analytics Daemon ==="
