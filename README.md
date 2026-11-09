@@ -7,6 +7,28 @@
 
 When a check passes and a [healthchecks.io](https://healthchecks.io/) callback is configured, the daemon pings that callback. Your monitoring service then alerts you if the pings are past your configured grace period.
 
+## Installation
+
+Health Analytics provides an installation script that automatically detects your system architecture and installs the appropriate binary.
+
+### Supported Architectures
+
+- `amd64` — 64-bit x86 systems
+- `arm64` — 64-bit ARM systems
+- `armv7` — 32-bit ARM systems
+
+### Install
+
+Run the following command from your terminal:
+
+```bash
+curl -sSL "https://raw.githubusercontent.com/bembudo/health-analytics/main/install.sh" | bash
+```
+
+The installation script downloads and installs the appropriate Health Analytics binary for your system.
+
+Once installed, refer to the [Configuration](#configuration) section to configure your monitors.
+
 ## Use Cases
 
 - Confirm that self-hosted services are reachable and return a healthy status.
