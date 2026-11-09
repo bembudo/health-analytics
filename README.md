@@ -5,7 +5,7 @@
 - **HTTP checks** request a URL and verify the status code.
 - **DNS checks** send a DNS query to a resolver and verify the response code (rcode).
 
-When a check passes and a healthchecks.io callback is configured, the daemon pings that callback. Your monitoring service then alerts you if the pings are past your configured grace period.
+When a check passes and a [healthchecks.io](https://healthchecks.io/) callback is configured, the daemon pings that callback. Your monitoring service then alerts you if the pings are past your configured grace period.
 
 ## Use Cases
 
@@ -119,3 +119,10 @@ These Gatus features are not supported:
 - `alerts`, including Telegram. Use `healthcheck callback url` with healthchecks.io for alerting.
 - `group`, and `client.failure-threshold`. A single failed check is reported immediately.
 - DNS over HTTPS and DNS over QUIC.
+
+  ## Acknowledgements
+
+- [healthchecks.io](https://healthchecks.io/) — For providing an excellent monitoring service and heartbeat-based monitoring infrastructure that Health Analytics integrates with.
+- [Gatus](https://github.com/TwiN/gatus) — An excellent open-source monitoring project that inspired the development of Health Analytics and its approach to endpoint and DNS monitoring.
+
+Health Analytics is an independent project and is not affiliated with either project.
