@@ -133,14 +133,6 @@ DoT checks verify the server certificate against the system trust store. For an 
 - Unknown keys in `config.yaml` are rejected at load time with an error that names the key, so a misspelled key cannot silently change a check. This also applies to Gatus-only keys such as `conditions`, `alerts`, `group`, and `client`.
 - DNS checks read a single UDP response of up to 512 bytes. Responses that are truncated (the TC flag is set) are not retried over TCP. This is fine for the record types listed above when the answers are small.
 
-## Current Limitations
-
-These Gatus features are not supported:
-
-- `conditions` (for example `[BODY]` and `[RESPONSE_TIME]`). DNS checks verify only the response code, not the answer records or response time.
-- `alerts`, including Telegram. Use `healthcheck callback url` with healthchecks.io for alerting.
-- `group`, and `client.failure-threshold`. A single failed check is reported immediately.
-- DNS over HTTPS and DNS over QUIC.
 
   ## Acknowledgements
 
