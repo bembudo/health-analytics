@@ -33,6 +33,7 @@ type EndpointConfig struct {
 	HealthCheckCallbackURL string        `yaml:"healthcheck callback url"`
 	RefreshRate            time.Duration `yaml:"refresh rate"`
 	ExpectedStatus         []int         `yaml:"expected status"`
+	InsecureSkipVerify     bool          `yaml:"insecure skip verify"`
 	DNS                    *DNSConfig    `yaml:"dns"`
 }
 
@@ -166,6 +167,9 @@ func readConfig() (Config, error) {
 			if err := ep.DNS.validate(); err != nil {
 				return Config{}, fmt.Errorf("endpoint %s has invalid dns config: %w", ep.URL, err)
 			}
+			if ep.InsecureSkipVerify {
+				return Config{}, fmt.Errorf("endpoint %s cannot use insecure skip verify with dns", ep.URL)
+			}
 		}
 		for _, code := range ep.ExpectedStatus {
 			if code < 100 || code > 599 {
@@ -221,9 +225,7 @@ func runEndpoint(ctx context.Context, ep EndpointConfig) {
 
 func performCheck(ep EndpointConfig) {
 	// Create an HTTP client with a reasonable timeout so requests don't hang
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	client := newHTTPClient(false)
 
 	timestamp := time.Now().Format("15:04:05")
 
@@ -231,7 +233,7 @@ func performCheck(ep EndpointConfig) {
 	if ep.DNS != nil {
 		healthy = checkDNS(ep, timestamp)
 	} else {
-		healthy = checkHTTP(client, ep, timestamp)
+		healthy = checkHTTP(newHTTPClient(ep.InsecureSkipVerify), ep, timestamp)
 	}
 
 	// 3. If successful and a callback is configured, ping healthchecks.io
@@ -240,10 +242,19 @@ func performCheck(ep EndpointConfig) {
 	}
 }
 
+func newHTTPClient(insecureSkipVerify bool) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecureSkipVerify}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+}
+
 func checkHTTP(client *http.Client, ep EndpointConfig, timestamp string) bool {
 	// 1. Ping the primary URL
 	resp, err := client.Head(ep.URL)
-	if err == nil && resp.StatusCode == http.StatusMethodNotAllowed {
+	if err == nil && (resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
 		resp.Body.Close()
 		resp, err = client.Get(ep.URL)
 	}

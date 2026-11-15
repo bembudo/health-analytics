@@ -73,8 +73,9 @@ endpoints:
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
 | `expected status` | No | `200` to `299` | A list of status codes that count as healthy. Each value must be between 100 and 599. |
+| `insecure skip verify` | No | `false` | Set to `true` to skip TLS certificate verification for this HTTP check. Use it only for hosts with a certificate your system does not trust, such as a self-signed Proxmox certificate. The healthcheck callback still verifies certificates. Not allowed with a `dns:` block. |
 
-HTTP requests time out after 10 seconds.
+HTTP requests time out after 10 seconds. Each check sends a HEAD request first and retries with GET if the server answers `405 Method Not Allowed` or `501 Not Implemented`, because some servers (for example Proxmox) reject HEAD.
 
 ### DNS Options
 
@@ -124,7 +125,7 @@ DNS queries time out after 10 seconds.
 
 ## TLS Certificates
 
-DoT checks verify the server certificate against the system trust store. For an IP address, the certificate must list that IP as a subject alternative name. Self-signed certificates fail with an `x509` error unless the CA is installed on the machine running the daemon. There is currently no option to skip verification.
+DoT checks verify the server certificate against the system trust store. For an IP address, the certificate must list that IP as a subject alternative name. Self-signed certificates fail with an `x509` error unless the CA is installed on the machine running the daemon. HTTP checks have an `insecure skip verify` option (see HTTP Options), but DoT checks do not. There is currently no option to skip verification for DoT.
 
 ## Behaviour Notes
 

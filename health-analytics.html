@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>health-analytics.html</title>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+
+</head>
+
+<body>
+
+<h1 id="health-analytics">health-analytics</h1>
+<p><code>health-analytics</code> is a small Go daemon that periodically
+checks endpoints and reports the result. It supports two kinds of
+checks:</p>
+<ul>
+<li><strong>HTTP checks</strong> request a URL and verify the status
+code.</li>
+<li><strong>DNS checks</strong> send a DNS query to a resolver and
+verify the response code (rcode).</li>
+</ul>
+<p>When a check passes and a healthchecks.io callback is configured, the
+daemon pings that callback. Your monitoring service then alerts you if
+the pings are past your configured grace period.</p>
+<h2 id="use-cases">Use Cases</h2>
+<ul>
+<li>Confirm that self-hosted services are reachable and return a healthy
+status.</li>
+<li>Confirm that a DNS resolver, answers queries for a name you care
+about.</li>
+<li>Confirm that a name does not resolve, such as a blocklisted domain
+or a retired hostname, by using <code>NXDOMAIN</code>.</li>
+<li>Confirm that DNS over TLS (DoT) works on a resolver’s port 853.</li>
+</ul>
+<h2 id="running">Running</h2>
+<p>The daemon reads <code>config.yaml</code> from its current working
+directory, so run it from the directory that contains the file.</p>
+<pre><code>
+The daemon checks `config.yaml` every 5 seconds. When the file changes, it reloads the config and starts, stops, or restarts only the monitors whose settings changed. If the new file is invalid, the daemon logs a warning and keeps the previous config.
+
+Results are printed to stdout with a timestamp, for example `SUCCESS`, `FAILURE`, `ERROR`, or `WARNING`.
+
+## Configuration Reference
+
+The config file has a single top-level key, `endpoints`, which is a list of checks.
+
+```yaml
+endpoints:
+  - url: &quot;https://example.com&quot;
+    alias: &quot;example&quot;
+    healthcheck callback url: &quot;https://healthchecks.example.com/ping/&lt;uuid&gt;&quot;
+    refresh rate: &quot;1m&quot;
+    expected status: [200, 204]</code></pre>
+<h3 id="common-options">Common Options</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Key</th>
+<th>Required</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>url</code></td>
+<td>Yes</td>
+<td>None</td>
+<td>The URL to request for HTTP checks, or the resolver to query for DNS
+checks.</td>
+</tr>
+<tr class="even">
+<td><code>alias</code></td>
+<td>No</td>
+<td>Empty</td>
+<td>A display name used in logs. If empty, logs show the
+<code>url</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>refresh rate</code></td>
+<td>Yes</td>
+<td>None</td>
+<td>How often to run the check, as a Go duration such as
+<code>30s</code>, <code>5m</code>, or <code>1h</code>. Must be greater
+than zero.</td>
+</tr>
+<tr class="even">
+<td><code>healthcheck callback url</code></td>
+<td>No</td>
+<td>Empty</td>
+<td>A URL that receives a GET request after each successful check.
+Failures never ping it.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="http-options">HTTP Options</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Key</th>
+<th>Required</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>expected status</code></td>
+<td>No</td>
+<td><code>200</code> to <code>299</code></td>
+<td>A list of status codes that count as healthy. Each value must be
+between 100 and 599.</td>
+</tr>
+</tbody>
+</table>
+<p>HTTP requests time out after 10 seconds.</p>
+<h3 id="dns-options">DNS Options</h3>
+<p>Add a <code>dns:</code> block to make an endpoint a DNS check. When
+this block is present, <code>expected status</code> is ignored and
+<code>url</code> is the resolver.</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">url</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;1.1.1.1:53&quot;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">alias</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;DNS&quot;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">refresh rate</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;30s&quot;</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">dns</span><span class="kw">:</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">query-name</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;example.com&quot;</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">query-type</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;A&quot;</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">expected-rcode</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;NOERROR&quot;</span></span></code></pre></div>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Key</th>
+<th>Required</th>
+<th>Default</th>
+<th>Allowed values</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>dns.query-name</code></td>
+<td>Yes</td>
+<td>None</td>
+<td>The domain name to query, sent exactly as written. A trailing dot is
+optional.</td>
+</tr>
+<tr class="even">
+<td><code>dns.query-type</code></td>
+<td>No</td>
+<td><code>A</code></td>
+<td><code>A</code>, <code>AAAA</code>, <code>CNAME</code>,
+<code>MX</code>, <code>NS</code>, <code>TXT</code> (not
+case-sensitive).</td>
+</tr>
+<tr class="odd">
+<td><code>dns.expected-rcode</code></td>
+<td>No</td>
+<td><code>NOERROR</code></td>
+<td><code>NOERROR</code>, <code>FORMERR</code>, <code>SERVFAIL</code>,
+<code>NXDOMAIN</code>, <code>NOTIMP</code>, <code>REFUSED</code> (not
+case-sensitive).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="resolver-address-formats">Resolver Address Formats</h3>
+<p>The <code>url</code> for a DNS check accepts these forms:</p>
+<ul>
+<li><code>10.10.0.138</code>: plain DNS over UDP on port 53.</li>
+<li><code>10.10.0.138:5353</code>: plain DNS over UDP on a custom
+port.</li>
+<li><code>tls://10.10.0.138</code>: DNS over TLS on port 853.</li>
+<li><code>tls://dns.example.com:8853</code>: DNS over TLS on a custom
+port.</li>
+<li>IPv6 addresses work in brackets, for example
+<code>[2001:db8::1]:53</code> or <code>tls://[2001:db8::1]</code>.</li>
+</ul>
+<p>DNS queries time out after 10 seconds.</p>
+<h2 id="choosing-an-expected-rcode">Choosing an Expected Rcode</h2>
+<ul>
+<li>Use <code>NOERROR</code> (the default) for normal monitoring. The
+name exists and the resolver answers.</li>
+<li>Use <code>NXDOMAIN</code> only when the check should pass if the
+name is absent. Examples include blocklist checks, retired hostnames,
+and split-horizon checks that should not leak internal names.</li>
+<li>A typo in <code>query-name</code> also returns
+<code>NXDOMAIN</code>, so the check would pass without testing anything.
+Verify the name first.</li>
+<li><code>SERVFAIL</code>, <code>REFUSED</code>, and timeouts all fail
+the check when you expect <code>NOERROR</code>.</li>
+</ul>
+<h2 id="setting-up-technitium">Setting Up Technitium</h2>
+<ul>
+<li>Plain DNS: set <code>url</code> to the Technitium IP on port 53. The
+forwarder protocol setting in Technitium does not affect this check,
+because the check talks to Technitium directly.</li>
+<li>DNS over TLS: set <code>url</code> to
+<code>tls://&lt;technitium-ip&gt;:853</code> and make sure Technitium
+has a TLS certificate for its DoT listener.</li>
+<li>Recursion: if Technitium’s “Allow Recursion Only For Private
+Networks” setting is on and the daemon runs off your LAN, queries are
+refused, and the check fails with <code>REFUSED</code>.</li>
+<li>Verify first: run
+<code>dig @&lt;technitium-ip&gt; &lt;name&gt;</code> from the machine
+that runs the daemon. If <code>dig</code> gets an answer, the check
+should pass too.</li>
+</ul>
+<h2 id="tls-certificates">TLS Certificates</h2>
+<p>DoT checks verify the server certificate against the system trust
+store. For an IP address, the certificate must list that IP as a subject
+alternative name. Self-signed certificates fail with an
+<code>x509</code> error unless the CA is installed on the machine
+running the daemon. There is currently no option to skip
+verification.</p>
+<h2 id="behaviour-notes">Behaviour Notes</h2>
+<ul>
+<li>Each endpoint runs on its own schedule, and the first check runs as
+soon as the monitor starts.</li>
+<li>Callbacks are pinged only after a successful check.</li>
+<li>Unknown keys in <code>config.yaml</code> are rejected at load time
+with an error that names the key, so a misspelled key cannot silently
+change a check. This also applies to Gatus-only keys such as
+<code>conditions</code>, <code>alerts</code>, <code>group</code>, and
+<code>client</code>.</li>
+<li>DNS checks read a single UDP response of up to 512 bytes. Responses
+that are truncated (the TC flag is set) are not retried over TCP. This
+is fine for the record types listed above when the answers are
+small.</li>
+</ul>
+<h2 id="current-limitations">Current Limitations</h2>
+<p>These Gatus features are not supported:</p>
+<ul>
+<li><code>conditions</code> (for example <code>[BODY]</code> and
+<code>[RESPONSE_TIME]</code>). DNS checks verify only the response code,
+not the answer records or response time.</li>
+<li><code>alerts</code>, including Telegram. Use
+<code>healthcheck callback url</code> with healthchecks.io for
+alerting.</li>
+<li><code>group</code>, and <code>client.failure-threshold</code>. A
+single failed check is reported immediately.</li>
+<li>DNS over HTTPS and DNS over QUIC.</li>
+</ul>
+
+</body>
+</html>
