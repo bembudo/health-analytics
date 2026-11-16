@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"slices"
@@ -23,8 +24,10 @@ import (
 )
 
 const (
-	configPath         = "config.yaml"
-	configPollInterval = 5 * time.Second
+	configPath           = "config.yaml"
+	configPollInterval   = 5 * time.Second
+	attemptTimeout       = 10 * time.Second
+	defaultRetryInterval = 5 * time.Second
 )
 
 type EndpointConfig struct {
@@ -35,6 +38,8 @@ type EndpointConfig struct {
 	ExpectedStatus         []int         `yaml:"expected status"`
 	InsecureSkipVerify     bool          `yaml:"insecure skip verify"`
 	DNS                    *DNSConfig    `yaml:"dns"`
+	retries                int
+	retryInterval          time.Duration
 }
 
 type DNSConfig struct {
@@ -89,7 +94,9 @@ func (dc DNSConfig) validate() error {
 }
 
 type Config struct {
-	Endpoints []EndpointConfig `yaml:"endpoints"`
+	Retries       int              `yaml:"retries"`
+	RetryInterval time.Duration    `yaml:"retry interval"`
+	Endpoints     []EndpointConfig `yaml:"endpoints"`
 }
 
 type worker struct {
@@ -156,6 +163,16 @@ func readConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
+	if config.Retries < 0 {
+		return Config{}, fmt.Errorf("retries must not be negative, got %d", config.Retries)
+	}
+	if config.RetryInterval < 0 {
+		return Config{}, fmt.Errorf("retry interval must not be negative, got %v", config.RetryInterval)
+	}
+	if config.RetryInterval == 0 {
+		config.RetryInterval = defaultRetryInterval
+	}
+
 	for i, ep := range config.Endpoints {
 		if ep.URL == "" {
 			return Config{}, fmt.Errorf("endpoint #%d is missing url", i+1)
@@ -171,11 +188,28 @@ func readConfig() (Config, error) {
 				return Config{}, fmt.Errorf("endpoint %s cannot use insecure skip verify with dns", ep.URL)
 			}
 		}
+		if ep.HealthCheckCallbackURL != "" {
+			parsed, err := url.Parse(ep.HealthCheckCallbackURL)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				return Config{}, fmt.Errorf("endpoint %s has invalid healthcheck callback url %q", ep.URL, ep.HealthCheckCallbackURL)
+			}
+		}
+		if config.Retries > 0 {
+			worstCase := time.Duration(config.Retries+1)*2*attemptTimeout + time.Duration(config.Retries)*config.RetryInterval
+			if worstCase >= ep.RefreshRate {
+				return Config{}, fmt.Errorf("endpoint %s may take up to %v per check with %d retries, which must be less than refresh rate %v", ep.URL, worstCase, config.Retries, ep.RefreshRate)
+			}
+		}
 		for _, code := range ep.ExpectedStatus {
 			if code < 100 || code > 599 {
 				return Config{}, fmt.Errorf("endpoint %s has invalid expected status %d", ep.URL, code)
 			}
 		}
+	}
+
+	for i := range config.Endpoints {
+		config.Endpoints[i].retries = config.Retries
+		config.Endpoints[i].retryInterval = config.RetryInterval
 	}
 
 	return config, nil
@@ -227,26 +261,46 @@ func performCheck(ep EndpointConfig) {
 	// Create an HTTP client with a reasonable timeout so requests don't hang
 	client := newHTTPClient(false)
 
-	timestamp := time.Now().Format("15:04:05")
-
 	var healthy bool
-	if ep.DNS != nil {
-		healthy = checkDNS(ep, timestamp)
-	} else {
-		healthy = checkHTTP(newHTTPClient(ep.InsecureSkipVerify), ep, timestamp)
+	var timestamp string
+	for attempt := 0; attempt <= ep.retries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(ep.retryInterval)
+		}
+		timestamp = time.Now().Format("15:04:05")
+		if attempt > 0 {
+			fmt.Printf("[%s]   -> Retry %d of %d\n", timestamp, attempt, ep.retries)
+		}
+		if ep.DNS != nil {
+			healthy = checkDNS(ep, timestamp)
+		} else {
+			healthy = checkHTTP(newHTTPClient(ep.InsecureSkipVerify), ep, timestamp)
+		}
+		if healthy {
+			break
+		}
 	}
 
-	// 3. If successful and a callback is configured, ping healthchecks.io
-	if healthy && ep.HealthCheckCallbackURL != "" {
-		pingCallback(client, ep, timestamp)
+	if ep.HealthCheckCallbackURL == "" {
+		return
 	}
+	if healthy {
+		pingCallback(client, ep.HealthCheckCallbackURL, timestamp)
+		return
+	}
+	failURL, err := failCallbackURL(ep.HealthCheckCallbackURL)
+	if err != nil {
+		fmt.Printf("[%s]   -> WARNING: Failed to build fail callback URL: %v\n", timestamp, err)
+		return
+	}
+	pingCallback(client, failURL, timestamp)
 }
 
 func newHTTPClient(insecureSkipVerify bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecureSkipVerify}
 	return &http.Client{
-		Timeout:   10 * time.Second,
+		Timeout:   attemptTimeout,
 		Transport: transport,
 	}
 }
@@ -289,8 +343,16 @@ func checkDNS(ep EndpointConfig, timestamp string) bool {
 	return true
 }
 
-func pingCallback(client *http.Client, ep EndpointConfig, timestamp string) {
-	cbResp, err := client.Get(ep.HealthCheckCallbackURL)
+func failCallbackURL(callbackURL string) (string, error) {
+	parsed, err := url.Parse(callbackURL)
+	if err != nil {
+		return "", err
+	}
+	return parsed.JoinPath("fail").String(), nil
+}
+
+func pingCallback(client *http.Client, callbackURL string, timestamp string) {
+	cbResp, err := client.Get(callbackURL)
 	if err != nil {
 		fmt.Printf("[%s]   -> WARNING: Failed to ping callback URL: %v\n", timestamp, err)
 		return
@@ -300,7 +362,7 @@ func pingCallback(client *http.Client, ep EndpointConfig, timestamp string) {
 }
 
 func queryDNS(resolver, name string, qtype uint16) (uint16, error) {
-	const timeout = 10 * time.Second
+	const timeout = attemptTimeout
 
 	id := uint16(rand.UintN(1 << 16))
 	query, err := buildDNSQuery(id, name, qtype)

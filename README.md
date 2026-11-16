@@ -5,7 +5,7 @@
 - **HTTP checks** request a URL and verify the status code.
 - **DNS checks** send a DNS query to a resolver and verify the response code (rcode).
 
-When a check passes and a [healthchecks.io](https://healthchecks.io/) callback is configured, the daemon pings that callback. Your monitoring service then alerts you if the pings are past your configured grace period.
+When a [healthchecks.io](https://healthchecks.io/) callback is configured, the daemon pings it after every check: the callback URL on success, and the same URL with `/fail` appended on failure. Your monitoring service then alerts you on explicit failures and when pings are past your configured grace period.
 
 ## Installation
 
@@ -48,9 +48,11 @@ Results are printed to stdout with a timestamp, for example `SUCCESS`, `FAILURE`
 
 ## Configuration Reference
 
-The config file has a single top-level key, `endpoints`, which is a list of checks.
+The config file has the top-level key `endpoints`, which is a list of checks. It can also set global options such as `retries` that apply to every endpoint.
 
 ```yaml
+retries: 1
+retry interval: "5s"
 endpoints:
   - url: "https://example.com"
     alias: "example"
@@ -59,6 +61,17 @@ endpoints:
     expected status: [200, 204]
 ```
 
+### Global Options
+
+These keys sit at the top level of `config.yaml`, next to `endpoints`, and apply to every endpoint.
+
+| Key | Required | Default | Description |
+| --- | --- | --- | --- |
+| `retries` | No | `0` | How many extra attempts to make after a failed check before reporting it. Each retry runs the same check. A failure sends `/fail` only after the last attempt fails. Must not be negative. |
+| `retry interval` | No | `5s` | How long to wait between attempts, as a Go duration. Must not be negative. Only used when `retries` is greater than zero. |
+
+With `retries` set, each check can take up to `(retries + 1) × 20s` plus `retries × retry interval`. An attempt can take up to 20s, for example an HTTP HEAD request followed by a GET, or a DoT dial followed by a read. This must be less than every endpoint's `refresh rate`, or the daemon refuses to load the config.
+
 ### Common Options
 
 | Key | Required | Default | Description |
@@ -66,7 +79,7 @@ endpoints:
 | `url` | Yes | None | The URL to request for HTTP checks, or the resolver to query for DNS checks. |
 | `alias` | No | Empty | A display name used in logs. If empty, logs show the `url`. |
 | `refresh rate` | Yes | None | How often to run the check, as a Go duration such as `30s`, `5m`, or `1h`. Must be greater than zero. |
-| `healthcheck callback url` | No | Empty | A URL that receives a GET request after each successful check. Failures never ping it. |
+| `healthcheck callback url` | No | Empty | A URL that receives a GET request after each check. On success the URL is pinged as-is. On failure `/fail` is appended to the path (for example `.../ping/<uuid>/fail`). |
 
 ### HTTP Options
 
@@ -130,7 +143,8 @@ DoT checks verify the server certificate against the system trust store. For an 
 ## Behaviour Notes
 
 - Each endpoint runs on its own schedule, and the first check runs as soon as the monitor starts.
-- Callbacks are pinged only after a successful check.
+- Callbacks are pinged after every check. Failures ping `<callback>/fail` instead of the callback URL.
+- A check that fails is retried according to the global `retries` setting. Each retry waits `retry interval` before running again, and a check stops retrying as soon as it passes.
 - Unknown keys in `config.yaml` are rejected at load time with an error that names the key, so a misspelled key cannot silently change a check. This also applies to Gatus-only keys such as `conditions`, `alerts`, `group`, and `client`.
 - DNS checks read a single UDP response of up to 512 bytes. Responses that are truncated (the TC flag is set) are not retried over TCP. This is fine for the record types listed above when the answers are small.
 
