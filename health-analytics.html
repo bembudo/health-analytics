@@ -22,9 +22,11 @@ code.</li>
 <li><strong>DNS checks</strong> send a DNS query to a resolver and
 verify the response code (rcode).</li>
 </ul>
-<p>When a check passes and a healthchecks.io callback is configured, the
-daemon pings that callback. Your monitoring service then alerts you if
-the pings are past your configured grace period.</p>
+<p>When a healthchecks.io callback is configured, the daemon pings it
+after every check: the callback URL on success, and the same URL with
+<code>/fail</code> appended on failure. Your monitoring service then
+alerts you on explicit failures and when pings are past your configured
+grace period.</p>
 <h2 id="use-cases">Use Cases</h2>
 <ul>
 <li>Confirm that self-hosted services are reachable and return a healthy
@@ -45,15 +47,53 @@ Results are printed to stdout with a timestamp, for example `SUCCESS`, `FAILURE`
 
 ## Configuration Reference
 
-The config file has a single top-level key, `endpoints`, which is a list of checks.
+The config file has the top-level key `endpoints`, which is a list of checks. It can also set global options such as `retries` that apply to every endpoint.
 
 ```yaml
+retries: 1
+retry interval: &quot;5s&quot;
 endpoints:
   - url: &quot;https://example.com&quot;
     alias: &quot;example&quot;
     healthcheck callback url: &quot;https://healthchecks.example.com/ping/&lt;uuid&gt;&quot;
     refresh rate: &quot;1m&quot;
     expected status: [200, 204]</code></pre>
+<h3 id="global-options">Global Options</h3>
+<p>These keys sit at the top level of <code>config.yaml</code>, next to
+<code>endpoints</code>, and apply to every endpoint.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Key</th>
+<th>Required</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>retries</code></td>
+<td>No</td>
+<td><code>0</code></td>
+<td>How many extra attempts to make after a failed check before reporting
+it. Each retry runs the same check. A failure sends <code>/fail</code>
+only after the last attempt fails. Must not be negative.</td>
+</tr>
+<tr class="even">
+<td><code>retry interval</code></td>
+<td>No</td>
+<td><code>5s</code></td>
+<td>How long to wait between attempts, as a Go duration. Must not be
+negative. Only used when <code>retries</code> is greater than zero.</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>retries</code> set, each check can take up to
+<code>(retries + 1) × 20s</code> plus <code>retries × retry interval</code>.
+An attempt can take up to 20s, for example an HTTP HEAD request followed
+by a GET, or a DoT dial followed by a read.
+This must be less than every endpoint's <code>refresh rate</code>, or the
+daemon refuses to load the config.</p>
 <h3 id="common-options">Common Options</h3>
 <table>
 <colgroup>
@@ -97,8 +137,9 @@ than zero.</td>
 <td><code>healthcheck callback url</code></td>
 <td>No</td>
 <td>Empty</td>
-<td>A URL that receives a GET request after each successful check.
-Failures never ping it.</td>
+<td>A URL that receives a GET request after each check. On success the
+URL is pinged as-is. On failure <code>/fail</code> is appended to the
+path (for example <code>.../ping/&lt;uuid&gt;/fail</code>).</td>
 </tr>
 </tbody>
 </table>
@@ -235,7 +276,11 @@ verification.</p>
 <ul>
 <li>Each endpoint runs on its own schedule, and the first check runs as
 soon as the monitor starts.</li>
-<li>Callbacks are pinged only after a successful check.</li>
+<li>Callbacks are pinged after every check. Failures ping
+<code>&lt;callback&gt;/fail</code> instead of the callback URL.</li>
+<li>A check that fails is retried according to the global
+<code>retries</code> setting. Each retry waits <code>retry interval</code>
+before running again, and a check stops retrying as soon as it passes.</li>
 <li>Unknown keys in <code>config.yaml</code> are rejected at load time
 with an error that names the key, so a misspelled key cannot silently
 change a check. This also applies to Gatus-only keys such as
