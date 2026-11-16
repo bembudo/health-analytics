@@ -306,8 +306,9 @@ func newHTTPClient(insecureSkipVerify bool) *http.Client {
 }
 
 func checkHTTP(client *http.Client, ep EndpointConfig, timestamp string) bool {
+	start := time.Now()
 	// 1. Ping the primary URL
-	resp, err := client.Head(ep.URL)
+	resp, err := headWithoutKeepAlive(client, ep.URL)
 	if err == nil && (resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented) {
 		resp.Body.Close()
 		resp, err = client.Get(ep.URL)
@@ -323,11 +324,21 @@ func checkHTTP(client *http.Client, ep EndpointConfig, timestamp string) bool {
 		fmt.Printf("[%s] FAILURE: %s returned unhealthy status code: %d\n", timestamp, ep.label(), resp.StatusCode)
 		return false
 	}
-	fmt.Printf("[%s] SUCCESS: %s returned status %d\n", timestamp, ep.label(), resp.StatusCode)
+	fmt.Printf("[%s] SUCCESS: %s returned status %d (%dms)\n", timestamp, ep.label(), resp.StatusCode, time.Since(start).Milliseconds())
 	return true
 }
 
+func headWithoutKeepAlive(client *http.Client, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodHead, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Close = true
+	return client.Do(req)
+}
+
 func checkDNS(ep EndpointConfig, timestamp string) bool {
+	start := time.Now()
 	rcode, err := queryDNS(ep.URL, ep.DNS.QueryName, dnsQueryTypes[ep.DNS.queryType()])
 	if err != nil {
 		fmt.Printf("[%s] ERROR: Failed to query %s for %s: %v\n", timestamp, ep.label(), ep.DNS.QueryName, err)
@@ -339,7 +350,7 @@ func checkDNS(ep EndpointConfig, timestamp string) bool {
 		fmt.Printf("[%s] FAILURE: %s returned rcode %s for %s, expected %s\n", timestamp, ep.label(), got, ep.DNS.QueryName, ep.DNS.expectedRcode())
 		return false
 	}
-	fmt.Printf("[%s] SUCCESS: %s resolved %s with rcode %s\n", timestamp, ep.label(), ep.DNS.QueryName, got)
+	fmt.Printf("[%s] SUCCESS: %s resolved %s with rcode %s (%dms)\n", timestamp, ep.label(), ep.DNS.QueryName, got, time.Since(start).Milliseconds())
 	return true
 }
 
