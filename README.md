@@ -29,6 +29,62 @@ The installation script downloads and installs the appropriate Health Analytics 
 
 Once installed, refer to the [Configuration](#configuration) section to configure your monitors.
 
+```mermaid
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "background": "#000000",
+    "primaryColor": "#050c16",
+    "primaryTextColor": "#e5e7eb",
+    "primaryBorderColor": "#252525",
+    "lineColor": "#bdbdbd",
+    "secondaryColor": "#001a12",
+    "tertiaryColor": "#000000",
+    "fontFamily": "Arial, sans-serif"
+  },
+  "flowchart": {
+    "curve": "linear",
+    "nodeSpacing": 12,
+    "rankSpacing": 24
+  }
+}}%%
+
+flowchart TD
+    A["<b>config.yaml</b><br/><small>Defines endpoints, refresh intervals, expected status codes, DNS settings and callback URLs</small>"]
+
+    B["<b>main.go — Configuration Manager</b><br/><small>Loads configuration and checks for changes every 5 seconds</small>"]
+
+    C["<b>HTTP Monitor</b><br/><small>HEAD / GET requests<br/>Expected HTTP status</small>"]
+
+    D["<b>DNS Monitor</b><br/><small>UDP DNS queries<br/>DNS-over-TLS</small>"]
+
+    E["<b>Health Evaluation</b><br/><small>Determines whether each check succeeded or failed</small>"]
+
+    F["<b>Healthchecks.io</b><br/><small>Receives successful check-ins and manages missed-check alerts and notification delivery</small>"]
+
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    D --> E
+    E --> F
+
+    classDef config fill:#050c16,stroke:#252525,color:#e5e7eb
+    classDef manager fill:#000000,stroke:#252525,color:#e5e7eb
+    classDef monitor fill:#001a12,stroke:#001a12,color:#e5e7eb
+    classDef evaluation fill:#000000,stroke:#252525,color:#e5e7eb
+    classDef healthchecks fill:#001a12,stroke:#001a12,color:#e5e7eb
+
+    class A config
+    class B manager
+    class C,D monitor
+    class E evaluation
+    class F healthchecks
+
+    linkStyle default stroke:#bdbdbd,stroke-width:1.5px
+```
+
+
 ## Use Cases
 
 - Confirm that self-hosted services are reachable and return a healthy status.
