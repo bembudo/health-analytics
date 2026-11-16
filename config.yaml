@@ -1,3 +1,5 @@
+retries: 1
+retry interval: "5s"
 endpoints:
   - url: "http://192.168.0.139:4533"
     healthcheck callback url: "https://healthchecks.universalserv.xyz/ping/48cbbcf7-ddc1-4727-866e-20ffc2f23d66"
@@ -12,8 +14,13 @@ endpoints:
   - url: "https://192.168.0.129:8006"
     healthcheck callback url: "https://raspberrypi5.tailfca8a9.ts.net/ping/d9ffc7b6-0b43-4d8a-b4aa-f70fd74b3658"
     refresh rate: "1m"
-    alias: "Proxmox"
     insecure skip verify: true
+    alias: "Proxmox"
+
+  - url: "http://192.168.0.140"
+    healthcheck callback url: "https://raspberrypi5.tailfca8a9.ts.net/ping/74eda171-ae04-49d8-9f92-43f62230f9db"
+    refresh rate: "1m"
+    alias: "ntfy"
 
   - url: "http://100.70.33.47:8090"
     healthcheck callback url: "https://healthchecks.universalserv.xyz/ping/6495ae32-9a38-402a-8bf8-5ab5700454d6"
