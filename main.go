@@ -12,12 +12,15 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -286,7 +289,7 @@ func performCheck(ep EndpointConfig) {
 		return
 	}
 	if healthy {
-		pingCallback(client, ep.HealthCheckCallbackURL, timestamp)
+		pingCallback(client, ep.HealthCheckCallbackURL, ep.label(), "ping")
 		return
 	}
 	failURL, err := failCallbackURL(ep.HealthCheckCallbackURL)
@@ -294,7 +297,7 @@ func performCheck(ep EndpointConfig) {
 		fmt.Printf("[%s]   -> WARNING: Failed to build fail callback URL: %v\n", timestamp, err)
 		return
 	}
-	pingCallback(client, failURL, timestamp)
+	pingCallback(client, failURL, ep.label(), "fail")
 }
 
 func newHTTPClient(insecureSkipVerify bool) *http.Client {
@@ -363,19 +366,116 @@ func failCallbackURL(callbackURL string) (string, error) {
 	return parsed.JoinPath("fail").String(), nil
 }
 
-func pingCallback(client *http.Client, callbackURL string, timestamp string) {
-	cbResp, err := client.Get(callbackURL)
-	if err != nil {
-		fmt.Printf("[%s]   -> WARNING: Failed to ping callback URL, retrying in %v: %v\n", timestamp, callbackRetryDelay, err)
-		time.Sleep(callbackRetryDelay)
-		cbResp, err = client.Get(callbackURL)
+func nowStamp() string {
+	return time.Now().Format("15:04:05")
+}
+
+type callbackTrace struct {
+	mu           sync.Mutex
+	dnsStart     time.Time
+	dnsDone      time.Time
+	connStart    time.Time
+	connDone     time.Time
+	tlsStart     time.Time
+	tlsDone      time.Time
+	wroteRequest time.Time
+	firstByte    time.Time
+}
+
+func (trace *callbackTrace) mark(field *time.Time) {
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	*field = time.Now()
+}
+
+func (trace *callbackTrace) clientTrace() *httptrace.ClientTrace {
+	return &httptrace.ClientTrace{
+		DNSStart:             func(httptrace.DNSStartInfo) { trace.mark(&trace.dnsStart) },
+		DNSDone:              func(httptrace.DNSDoneInfo) { trace.mark(&trace.dnsDone) },
+		ConnectStart:         func(string, string) { trace.mark(&trace.connStart) },
+		ConnectDone:          func(string, string, error) { trace.mark(&trace.connDone) },
+		TLSHandshakeStart:    func() { trace.mark(&trace.tlsStart) },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { trace.mark(&trace.tlsDone) },
+		WroteRequest:         func(httptrace.WroteRequestInfo) { trace.mark(&trace.wroteRequest) },
+		GotFirstResponseByte: func() { trace.mark(&trace.firstByte) },
 	}
+}
+
+func (trace *callbackTrace) summary() string {
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	var phases []string
+	addPhase := func(name string, start, done time.Time) {
+		if start.IsZero() {
+			return
+		}
+		if done.IsZero() {
+			phases = append(phases, name+" stalled")
+			return
+		}
+		phases = append(phases, fmt.Sprintf("%s %dms", name, done.Sub(start).Milliseconds()))
+	}
+	addPhase("dns", trace.dnsStart, trace.dnsDone)
+	addPhase("connect", trace.connStart, trace.connDone)
+	addPhase("tls", trace.tlsStart, trace.tlsDone)
+	if !trace.wroteRequest.IsZero() && trace.firstByte.IsZero() {
+		phases = append(phases, "waiting for response")
+	}
+	if len(phases) == 0 {
+		return "no connection attempted"
+	}
+	return strings.Join(phases, ", ")
+}
+
+func classifyCallbackError(err error) string {
+	var dnsErr *net.DNSError
+	var certErr *tls.CertificateVerificationError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &dnsErr):
+		return "dns"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.As(err, &certErr):
+		return "tls"
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	default:
+		return "error"
+	}
+}
+
+func attemptCallback(client *http.Client, callbackURL string) (*http.Response, *callbackTrace, error) {
+	trace := &callbackTrace{}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace.clientTrace()), http.MethodGet, callbackURL, nil)
 	if err != nil {
-		fmt.Printf("[%s]   -> WARNING: Failed to ping callback URL: %v\n", timestamp, err)
-		return
+		return nil, trace, err
+	}
+	resp, err := client.Do(req)
+	return resp, trace, err
+}
+
+func pingCallback(client *http.Client, callbackURL string, label string, kind string) {
+	start := time.Now()
+	cbResp, trace, err := attemptCallback(client, callbackURL)
+	retried := false
+	if err != nil {
+		fmt.Printf("[%s]   -> WARNING: %s callback for %s failed after %dms (%s) [%s], retrying in %v: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), callbackRetryDelay, err)
+		time.Sleep(callbackRetryDelay)
+		start = time.Now()
+		cbResp, trace, err = attemptCallback(client, callbackURL)
+		if err != nil {
+			fmt.Printf("[%s]   -> WARNING: %s callback for %s retry failed after %dms (%s) [%s]: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), err)
+			return
+		}
+		retried = true
 	}
 	defer cbResp.Body.Close()
-	fmt.Printf("[%s]   -> Callback pinged successfully (Status: %d)\n", timestamp, cbResp.StatusCode)
+	suffix := ""
+	if retried {
+		suffix = " on retry"
+	}
+	fmt.Printf("[%s]   -> Callback %s for %s succeeded%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
 }
 
 func queryDNS(resolver, name string, qtype uint16) (uint16, error) {
