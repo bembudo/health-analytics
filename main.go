@@ -27,6 +27,7 @@ const (
 	configPath           = "config.yaml"
 	configPollInterval   = 5 * time.Second
 	attemptTimeout       = 10 * time.Second
+	callbackRetryDelay   = 5 * time.Second
 	defaultRetryInterval = 5 * time.Second
 )
 
@@ -364,6 +365,11 @@ func failCallbackURL(callbackURL string) (string, error) {
 
 func pingCallback(client *http.Client, callbackURL string, timestamp string) {
 	cbResp, err := client.Get(callbackURL)
+	if err != nil {
+		fmt.Printf("[%s]   -> WARNING: Failed to ping callback URL, retrying in %v: %v\n", timestamp, callbackRetryDelay, err)
+		time.Sleep(callbackRetryDelay)
+		cbResp, err = client.Get(callbackURL)
+	}
 	if err != nil {
 		fmt.Printf("[%s]   -> WARNING: Failed to ping callback URL: %v\n", timestamp, err)
 		return
