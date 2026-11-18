@@ -4,6 +4,7 @@
 
 - **HTTP checks** request a URL and verify the status code.
 - **DNS checks** send a DNS query to a resolver and verify the response code (rcode).
+- **TCP checks** open a TCP connection to a `host:port` and verify that the port accepts it.
 
 When a [healthchecks.io](https://healthchecks.io/) callback is configured, the daemon pings it after every check: the callback URL on success, and the same URL with `/fail` appended on failure. Your monitoring service then alerts you on explicit failures and when pings are past your configured grace period.
 
@@ -36,6 +37,7 @@ Once installed, refer to the [Configuration](#configuration) section to configur
 - Confirm that a DNS resolver, answers queries for a name you care about.
 - Confirm that a name does not resolve, such as a blocklisted domain or a retired hostname, by using `NXDOMAIN`.
 - Confirm that DNS over TLS (DoT) works on a resolver's port 853.
+- Confirm that a TCP port accepts connections, for example a DNS server's TCP 53 or an SSH port. This is separate from UDP DNS checks.
 
 ## Running
 
@@ -71,13 +73,13 @@ These keys sit at the top level of `config.yaml`, next to `endpoints`, and apply
 | `retries` | No | `0` | How many extra attempts to make after a failed check before reporting it. Each retry runs the same check. A failure sends `/fail` only after the last attempt fails. Must not be negative. |
 | `retry interval` | No | `5s` | How long to wait between attempts, as a Go duration. Must not be negative. Only used when `retries` is greater than zero. |
 
-With `retries` set, each check can take up to `(retries + 1) × 20s` plus `retries × retry interval`. An attempt can take up to 20s, for example an HTTP HEAD request followed by a GET, or a DoT dial followed by a read. This must be less than every endpoint's `refresh rate`, or the daemon refuses to load the config.
+With `retries` set, each check can take up to `(retries + 1) × attempt time` plus `retries × retry interval`. An HTTP or DNS attempt can take up to 20s, for example an HTTP HEAD request followed by a GET, or a DoT dial followed by a read. A TCP attempt takes up to its `tcp.timeout`. This must be less than every endpoint's `refresh rate`, or the daemon refuses to load the config.
 
 ### Common Options
 
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
-| `url` | Yes | None | The URL to request for HTTP checks, or the resolver to query for DNS checks. |
+| `url` | Yes | None | The URL to request for HTTP checks, the resolver to query for DNS checks, or the `host:port` to connect to for TCP checks. |
 | `alias` | No | Empty | A display name used in logs. If empty, logs show the `url`. |
 | `refresh rate` | Yes | None | How often to run the check, as a Go duration such as `30s`, `5m`, or `1h`. Must be greater than zero. |
 | `healthcheck callback url` | No | Empty | A URL that receives a GET request after each check. On success the URL is pinged as-is. On failure `/fail` is appended to the path (for example `.../ping/<uuid>/fail`). |
@@ -123,6 +125,28 @@ The `url` for a DNS check accepts these forms:
 
 DNS queries time out after 10 seconds.
 
+### TCP Options
+
+Add a `tcp:` block to check only that a TCP port accepts a connection. The check does not send any application data, so it says nothing about the service behind the port. Use a separate HTTP, DNS, or other check for that. When this block is present, `expected status` is ignored and `url` must be `host:port`.
+
+```yaml
+  - url: "192.168.0.125:53"
+    alias: "Technitium TCP"
+    refresh rate: "1m"
+    tcp:
+      timeout: "3s"
+      network: "tcp4"
+```
+
+| Key | Required | Default | Allowed values |
+| --- | --- | --- | --- |
+| `tcp.timeout` | No | `10s` | How long the connection must succeed, as a Go duration. Must not be negative. |
+| `tcp.network` | No | `tcp` | `tcp` (either IP version), `tcp4` (IPv4 only), or `tcp6` (IPv6 only). Not case-sensitive. |
+
+The `url` accepts a hostname or IP address with a port. IPv6 addresses go in brackets, for example `[2001:db8::1]:22`. A hostname is resolved first, so a DNS failure is reported as `dns`. A refused connection is reported as `connection refused`, and a connection that does not complete in time is reported as `timeout`. A `tcp:` block cannot be combined with `dns:`.
+
+A UDP DNS check does not prove that TCP port 53 works. Add a separate `tcp:` check on port 53 if you rely on TCP.
+
 ## Choosing an Expected Rcode
 
 - Use `NOERROR` (the default) for normal monitoring. The name exists and the resolver answers.
@@ -147,6 +171,7 @@ DoT checks verify the server certificate against the system trust store. For an 
 - Callbacks are pinged after every check. Failures ping `<callback>/fail` instead of the callback URL.
 - A check that fails is retried according to the global `retries` setting. Each retry waits `retry interval` before running again, and a check stops retrying as soon as it passes.
 - Unknown keys in `config.yaml` are rejected at load time with an error that names the key, so a misspelled key cannot silently change a check. This also applies to Gatus-only keys such as `conditions`, `alerts`, `group`, and `client`.
+- TCP checks are only a connect test. They do not send or read any application data.
 - DNS checks read a single UDP response of up to 512 bytes. Responses that are truncated (the TC flag is set) are not retried over TCP. This is fine for the record types listed above when the answers are small.
 
 

@@ -42,6 +42,7 @@ type EndpointConfig struct {
 	ExpectedStatus         []int         `yaml:"expected status"`
 	InsecureSkipVerify     bool          `yaml:"insecure skip verify"`
 	DNS                    *DNSConfig    `yaml:"dns"`
+	TCP                    *TCPConfig    `yaml:"tcp"`
 	retries                int
 	retryInterval          time.Duration
 }
@@ -93,6 +94,47 @@ func (dc DNSConfig) validate() error {
 	}
 	if !slices.Contains(dnsRcodes, dc.expectedRcode()) {
 		return fmt.Errorf("invalid dns expected rcode %q", dc.ExpectedRcode)
+	}
+	return nil
+}
+
+type TCPConfig struct {
+	Timeout time.Duration `yaml:"timeout"`
+	Network string        `yaml:"network"`
+}
+
+var tcpNetworks = []string{"tcp", "tcp4", "tcp6"}
+
+func (tc TCPConfig) network() string {
+	if tc.Network == "" {
+		return "tcp"
+	}
+	return strings.ToLower(tc.Network)
+}
+
+func (tc TCPConfig) timeout() time.Duration {
+	if tc.Timeout == 0 {
+		return attemptTimeout
+	}
+	return tc.Timeout
+}
+
+func (tc TCPConfig) validate(address string) error {
+	if strings.Contains(address, "://") {
+		return fmt.Errorf("tcp url must be host:port without a scheme, got %q", address)
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return fmt.Errorf("tcp url must be host:port, got %q", address)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("invalid tcp port %q", port)
+	}
+	if !slices.Contains(tcpNetworks, tc.network()) {
+		return fmt.Errorf("invalid tcp network %q", tc.Network)
+	}
+	if tc.Timeout < 0 {
+		return fmt.Errorf("tcp timeout must not be negative, got %v", tc.Timeout)
 	}
 	return nil
 }
@@ -192,6 +234,17 @@ func readConfig() (Config, error) {
 				return Config{}, fmt.Errorf("endpoint %s cannot use insecure skip verify with dns", ep.URL)
 			}
 		}
+		if ep.TCP != nil {
+			if ep.DNS != nil {
+				return Config{}, fmt.Errorf("endpoint %s cannot have both dns and tcp checks", ep.URL)
+			}
+			if err := ep.TCP.validate(ep.URL); err != nil {
+				return Config{}, fmt.Errorf("endpoint %s has invalid tcp config: %w", ep.URL, err)
+			}
+			if ep.InsecureSkipVerify {
+				return Config{}, fmt.Errorf("endpoint %s cannot use insecure skip verify with tcp", ep.URL)
+			}
+		}
 		if ep.HealthCheckCallbackURL != "" {
 			parsed, err := url.Parse(ep.HealthCheckCallbackURL)
 			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
@@ -199,7 +252,11 @@ func readConfig() (Config, error) {
 			}
 		}
 		if config.Retries > 0 {
-			worstCase := time.Duration(config.Retries+1)*2*attemptTimeout + time.Duration(config.Retries)*config.RetryInterval
+			attempt := 2 * attemptTimeout
+			if ep.TCP != nil {
+				attempt = ep.TCP.timeout()
+			}
+			worstCase := time.Duration(config.Retries+1)*attempt + time.Duration(config.Retries)*config.RetryInterval
 			if worstCase >= ep.RefreshRate {
 				return Config{}, fmt.Errorf("endpoint %s may take up to %v per check with %d retries, which must be less than refresh rate %v", ep.URL, worstCase, config.Retries, ep.RefreshRate)
 			}
@@ -277,6 +334,8 @@ func performCheck(ep EndpointConfig) {
 		}
 		if ep.DNS != nil {
 			healthy = checkDNS(ep, timestamp)
+		} else if ep.TCP != nil {
+			healthy = checkTCP(ep, timestamp)
 		} else {
 			healthy = checkHTTP(newHTTPClient(ep.InsecureSkipVerify), ep, timestamp)
 		}
@@ -358,6 +417,18 @@ func checkDNS(ep EndpointConfig, timestamp string) bool {
 	return true
 }
 
+func checkTCP(ep EndpointConfig, timestamp string) bool {
+	start := time.Now()
+	conn, err := net.DialTimeout(ep.TCP.network(), ep.URL, ep.TCP.timeout())
+	if err != nil {
+		fmt.Printf("[%s] ERROR: Failed to connect to %s (%s): %v\n", timestamp, ep.label(), classifyNetError(err), err)
+		return false
+	}
+	conn.Close()
+	fmt.Printf("[%s] SUCCESS: %s accepted TCP connection (%dms)\n", timestamp, ep.label(), time.Since(start).Milliseconds())
+	return true
+}
+
 func failCallbackURL(callbackURL string) (string, error) {
 	parsed, err := url.Parse(callbackURL)
 	if err != nil {
@@ -427,7 +498,7 @@ func (trace *callbackTrace) summary() string {
 	return strings.Join(phases, ", ")
 }
 
-func classifyCallbackError(err error) string {
+func classifyNetError(err error) string {
 	var dnsErr *net.DNSError
 	var certErr *tls.CertificateVerificationError
 	var netErr net.Error
@@ -461,7 +532,7 @@ func pingCallback(client *http.Client, callbackURL string, label string, kind st
 	retried := false
 	if err != nil || cbResp.StatusCode >= http.StatusInternalServerError {
 		if err != nil {
-			fmt.Printf("[%s]   -> WARNING: %s callback for %s failed after %dms (%s) [%s], retrying in %v: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), callbackRetryDelay, err)
+			fmt.Printf("[%s]   -> WARNING: %s callback for %s failed after %dms (%s) [%s], retrying in %v: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyNetError(err), trace.summary(), callbackRetryDelay, err)
 		} else {
 			fmt.Printf("[%s]   -> WARNING: %s callback for %s returned status %d after %dms, retrying in %v\n", nowStamp(), kind, label, cbResp.StatusCode, time.Since(start).Milliseconds(), callbackRetryDelay)
 			cbResp.Body.Close()
@@ -470,7 +541,7 @@ func pingCallback(client *http.Client, callbackURL string, label string, kind st
 		start = time.Now()
 		cbResp, trace, err = attemptCallback(client, callbackURL)
 		if err != nil {
-			fmt.Printf("[%s]   -> WARNING: %s callback for %s retry failed after %dms (%s) [%s]: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), err)
+			fmt.Printf("[%s]   -> WARNING: %s callback for %s retry failed after %dms (%s) [%s]: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyNetError(err), trace.summary(), err)
 			return
 		}
 		retried = true

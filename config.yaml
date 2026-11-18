@@ -15,3 +15,24 @@ endpoints:
       query-type: "A"
       expected-rcode: "NOERROR"
       
+
+  - url: "https://jellyfin.example.com"
+    alias: "Jellyfin"
+    refresh rate: "1m"
+    healthcheck callback url: "https://hc-ping.com/UUID"
+
+  - url: "192.168.0.125:53"
+    alias: "Technitium TCP"
+    refresh rate: "1m"
+    healthcheck callback url: "https://hc-ping.com/UUID"
+    tcp:
+      timeout: "3s"
+      network: "tcp4"
+
+  - url: "192.168.0.114:22"
+    alias: "Orange Pi SSH"
+    refresh rate: "2m"
+    healthcheck callback url: "https://hc-ping.com/UUID"
+    tcp:
+      timeout: "5s"
+      network: "tcp"
