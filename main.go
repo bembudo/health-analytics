@@ -459,8 +459,13 @@ func pingCallback(client *http.Client, callbackURL string, label string, kind st
 	start := time.Now()
 	cbResp, trace, err := attemptCallback(client, callbackURL)
 	retried := false
-	if err != nil {
-		fmt.Printf("[%s]   -> WARNING: %s callback for %s failed after %dms (%s) [%s], retrying in %v: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), callbackRetryDelay, err)
+	if err != nil || cbResp.StatusCode >= http.StatusInternalServerError {
+		if err != nil {
+			fmt.Printf("[%s]   -> WARNING: %s callback for %s failed after %dms (%s) [%s], retrying in %v: %v\n", nowStamp(), kind, label, time.Since(start).Milliseconds(), classifyCallbackError(err), trace.summary(), callbackRetryDelay, err)
+		} else {
+			fmt.Printf("[%s]   -> WARNING: %s callback for %s returned status %d after %dms, retrying in %v\n", nowStamp(), kind, label, cbResp.StatusCode, time.Since(start).Milliseconds(), callbackRetryDelay)
+			cbResp.Body.Close()
+		}
 		time.Sleep(callbackRetryDelay)
 		start = time.Now()
 		cbResp, trace, err = attemptCallback(client, callbackURL)
@@ -475,7 +480,16 @@ func pingCallback(client *http.Client, callbackURL string, label string, kind st
 	if retried {
 		suffix = " on retry"
 	}
-	fmt.Printf("[%s]   -> Callback %s for %s succeeded%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
+	switch {
+	case cbResp.StatusCode >= http.StatusOK && cbResp.StatusCode < http.StatusMultipleChoices:
+		fmt.Printf("[%s]   -> Callback %s for %s succeeded%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
+	case cbResp.StatusCode >= http.StatusBadRequest && cbResp.StatusCode < http.StatusInternalServerError:
+		fmt.Printf("[%s]   -> ERROR: %s callback for %s rejected%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
+	case cbResp.StatusCode >= http.StatusInternalServerError:
+		fmt.Printf("[%s]   -> WARNING: %s callback for %s hit remote service error%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
+	default:
+		fmt.Printf("[%s]   -> WARNING: %s callback for %s returned unexpected status%s (Status: %d, %dms)\n", nowStamp(), kind, label, suffix, cbResp.StatusCode, time.Since(start).Milliseconds())
+	}
 }
 
 func queryDNS(resolver, name string, qtype uint16) (uint16, error) {
