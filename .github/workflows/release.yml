@@ -24,13 +24,13 @@ jobs:
           mkdir -p build
           
           echo "Building for Linux AMD64..."
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/health-analytics-linux-amd64 main.go
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/health-analytics-linux-amd64 .
           
           echo "Building for Linux ARM64..."
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o build/health-analytics-linux-arm64 main.go
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o build/health-analytics-linux-arm64 .
           
           echo "Building for Linux ARMv7..."
-          GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o build/health-analytics-linux-armv7 main.go
+          GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o build/health-analytics-linux-armv7 .
 
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v3
